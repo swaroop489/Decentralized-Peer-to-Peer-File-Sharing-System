@@ -10,6 +10,7 @@ import {
   encryptChunkAES,
   decryptChunkAES,
 } from "../utils/cryptoUtils";
+import { useToast } from "../context/ToastContext";
 
 const SOCKET_SERVER_URL = "http://localhost:5000";
 
@@ -35,6 +36,8 @@ export default function PeerConnection() {
 
   const storedUser = JSON.parse(localStorage.getItem("user") || "null");
   const userName = storedUser?.name || "Anonymous";
+
+  const { addToast } = useToast();
 
   useEffect(() => {
     connectedPeersRef.current = connectedPeers;
@@ -85,7 +88,6 @@ export default function PeerConnection() {
           }
         }
       });
-
       setPeers(available);
     });
 
@@ -257,6 +259,7 @@ export default function PeerConnection() {
 
               setReceivedFiles(prev => [{ name: nameToUse, url, fileType: receivedFileType, from: { id: sender.id, name: sender.name } }, ...prev]);
               setProgressMap(prev => ({ ...prev, [peerId]: 0 }));
+              addToast(`Received file "${nameToUse}" from ${sender.name}`, "info");
             }
 
             // reset transfer state
@@ -351,11 +354,15 @@ export default function PeerConnection() {
       connectedPeersRef.current = next;
       return next;
     });
+    addToast(`Connection accepted with ${name}`, "success");
     setPeers(prev => prev.filter(p => p.id !== id));
     setIncomingRequest(null);
   };
 
-  const declineConnection = () => setIncomingRequest(null);
+  const declineConnection = () => {
+  addToast("Connection request declined", "error");
+  setIncomingRequest(null);
+};
 
   // File handling
   const handleFileChangeForPeer = (peerId, e) => {
@@ -458,9 +465,15 @@ export default function PeerConnection() {
       setProgressMap(prev => ({ ...prev, [peerId]: Math.floor((offset / file.size) * 100) }));
       if (offset < file.size) readSlice(offset);
       else {
-        setTimeout(() => { try { channel.send(JSON.stringify({ type: "done", transferId })); } catch(e){} }, 20);
-        setTimeout(() => setProgressMap(prev => ({ ...prev, [peerId]: 0 })), 1200);
-      }
+  setTimeout(() => { 
+    try { 
+      channel.send(JSON.stringify({ type: "done", transferId })); 
+      addToast(`File "${file.name}" sent successfully to ${peerId}`, "success");
+    } catch(e){} 
+  }, 20);
+  setTimeout(() => setProgressMap(prev => ({ ...prev, [peerId]: 0 })), 1200);
+}
+
     };
 
     readSlice(0);

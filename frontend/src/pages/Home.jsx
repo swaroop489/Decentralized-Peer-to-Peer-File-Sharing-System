@@ -1,6 +1,7 @@
 import React, { useState } from "react";
 import Navbar from "../components/Navbar";
 import PeerConnection from "./PeerConnection";
+import { ToastProvider } from "../context/ToastContext";
 
 export default function Home() {
   const [peers, setPeers] = useState([]);
@@ -27,7 +28,9 @@ export default function Home() {
       </section>
 
       {/* Peer-to-Peer File Transfer */}
+      <ToastProvider>
       <PeerConnection />
+    </ToastProvider>
 
       {/* Footer */}
       <footer className="text-center p-6 text-gray-500 text-sm mt-12 border-t">
