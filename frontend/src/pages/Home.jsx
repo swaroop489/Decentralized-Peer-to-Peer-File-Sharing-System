@@ -1,30 +1,9 @@
 import React, { useState } from "react";
 import Navbar from "../components/Navbar";
-
+import FileUpload from "./FileUpload";
 
 export default function Home() {
-  // State
-  const [files, setFiles] = useState([]);
   const [peers, setPeers] = useState([]);
-
-  // Drag & Drop handlers
-  const handleDrop = (e) => {
-    e.preventDefault();
-    const droppedFiles = Array.from(e.dataTransfer.files);
-    setFiles((prev) => [...prev, ...droppedFiles]);
-  };
-
-  const handleDragOver = (e) => e.preventDefault();
-
-  // File input change
-  const handleFileChange = (e) => setFiles([...files, ...Array.from(e.target.files)]);
-
-  // Upload action
-  const handleUpload = () => {
-    if (files.length === 0) return alert("No files selected");
-    console.log("Uploading files:", files);
-    // TODO: integrate with backend / socket.io
-  };
 
   // Peer actions
   const handleConnectPeer = () => console.log("Connect peer clicked");
@@ -44,12 +23,6 @@ export default function Home() {
         </p>
         <div className="space-x-4">
           <button
-            onClick={handleUpload}
-            className="bg-blue-600 text-white px-6 py-2 rounded hover:bg-blue-700 transition"
-          >
-            Upload File
-          </button>
-          <button
             onClick={handleConnectPeer}
             className="bg-green-600 text-white px-6 py-2 rounded hover:bg-green-700 transition"
           >
@@ -58,32 +31,8 @@ export default function Home() {
         </div>
       </section>
 
-      {/* File Upload Section */}
-      <section
-        className="max-w-2xl mx-auto my-10 p-6 bg-white rounded shadow-md border-dashed border-2 border-gray-300 hover:border-blue-400 transition cursor-pointer text-center"
-        onDrop={handleDrop}
-        onDragOver={handleDragOver}
-        onClick={() => document.getElementById("fileInput").click()}
-      >
-        <input
-          id="fileInput"
-          type="file"
-          multiple
-          className="hidden"
-          onChange={handleFileChange}
-        />
-        <p className="text-gray-500">Drag & drop files here, or click to select files</p>
-        {files.length > 0 && (
-          <div className="mt-4 text-left">
-            <h4 className="font-semibold mb-2">Selected Files:</h4>
-            <ul className="list-disc ml-5">
-              {files.map((file, idx) => (
-                <li key={idx}>{file.name}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </section>
+      {/* File Upload Component */}
+      <FileUpload />
 
       {/* Connected Peers Section */}
       <section className="max-w-2xl mx-auto my-10 p-6 bg-white rounded shadow-md">
@@ -123,6 +72,5 @@ export default function Home() {
         © 2025 P2P FileShare. All rights reserved.
       </footer>
     </div>
-    
   );
 }
