@@ -1,5 +1,3 @@
-// === Frontend: src/components/PeerConnection.jsx ===
-
 import React, { useEffect, useRef, useState } from "react";
 import io from "socket.io-client";
 
