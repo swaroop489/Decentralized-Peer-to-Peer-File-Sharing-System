@@ -1,51 +1,91 @@
 // backend/socket/signaling.js
 export default function setupSocket(io) {
-  let connectedPeers = [];
+  // store socketId -> { id, name, publicKey }
+  const users = new Map();
+
+  const emitPeerListToAll = () => {
+    const list = Array.from(users.values()).map(u => ({
+      id: u.id,
+      name: u.name,
+      publicKey: u.publicKey || null
+    }));
+    io.emit("peer-list", list);
+  };
 
   io.on("connection", (socket) => {
     console.log("New client connected:", socket.id);
 
-    // Store user name when client connects
-    socket.on("new-user", ({ name }) => {
-      socket.userName = name || "Anonymous";
-      connectedPeers.push({ id: socket.id, name: socket.userName });
-      io.emit("peer-list", connectedPeers);
+    // new-user: { name, publicKey }
+    socket.on("new-user", ({ name, publicKey }) => {
+      const entry = { id: socket.id, name: name || "Anonymous", publicKey: publicKey || null };
+      users.set(socket.id, entry);
+      console.log("new-user:", socket.id, entry.name, "hasPublicKey:", !!entry.publicKey);
+      emitPeerListToAll();
     });
 
-    // Handle offer
-    socket.on("offer", ({ to, offer, name }) => {
-      io.to(to).emit("offer", { from: socket.id, offer, name });
+    // handle offer: include sender's stored publicKey when forwarding
+    socket.on("offer", ({ to, offer, name, publicKey }) => {
+      // update stored info for sender if provided
+      const sender = users.get(socket.id) || { id: socket.id, name: name || "Anonymous", publicKey: null };
+      if (publicKey) sender.publicKey = publicKey;
+      sender.name = name || sender.name;
+      users.set(socket.id, sender);
+
+      console.log("offer from", socket.id, "->", to, "senderHasPublicKey:", !!sender.publicKey);
+      const payload = { from: socket.id, offer, name: sender.name, publicKey: sender.publicKey || null };
+      if (io.sockets.sockets.get(to)) {
+        io.to(to).emit("offer", payload);
+      } else {
+        console.warn("offer target not found:", to);
+      }
     });
 
-    // Handle answer
+    // forward answer
     socket.on("answer", ({ to, answer }) => {
-      io.to(to).emit("answer", { from: socket.id, answer });
+      console.log("answer from", socket.id, "->", to);
+      if (io.sockets.sockets.get(to)) {
+        io.to(to).emit("answer", { from: socket.id, answer });
+      }
     });
 
-    // Handle ICE candidates
+    // forward ice candidate
     socket.on("ice-candidate", ({ to, candidate }) => {
-      io.to(to).emit("ice-candidate", { from: socket.id, candidate });
+      if (io.sockets.sockets.get(to)) {
+        io.to(to).emit("ice-candidate", { from: socket.id, candidate });
+      }
     });
 
-    // Handle connection acceptance
+    // connection-accepted: notify both sides and keep names consistent
     socket.on("connection-accepted", ({ to }) => {
-      const accepterName = socket.userName;
-      // Notify original requester
-      io.to(to).emit("connection-accepted", { from: socket.id, name: accepterName });
-      // Notify accepter too so UI updates for them
-      io.to(socket.id).emit("connection-accepted", { from: to, name: getPeerName(to) });
+      const accepter = users.get(socket.id) || { id: socket.id, name: "Anonymous" };
+      console.log("connection-accepted:", socket.id, "->", to);
+      if (io.sockets.sockets.get(to)) {
+        io.to(to).emit("connection-accepted", { from: socket.id, name: accepter.name });
+      }
+      // also notify accepter so UI can show the other side (if desired)
+      const otherName = (users.get(to) && users.get(to).name) || "Anonymous";
+      io.to(socket.id).emit("connection-accepted", { from: to, name: otherName });
     });
 
-    // Handle disconnect
-    socket.on("disconnect", () => {
-      console.log("Client disconnected:", socket.id);
-      connectedPeers = connectedPeers.filter((p) => p.id !== socket.id);
-      io.emit("peer-list", connectedPeers);
+    // Respond to client asking for a specific peer's public key
+    // payload: { to: "<peerSocketId>" }
+    socket.on("get-public-key", ({ to }) => {
+      const target = users.get(to);
+      console.log("get-public-key request:", socket.id, "for", to, "foundKey:", !!target?.publicKey);
+      // respond only to requester (socket.emit)
+      socket.emit("public-key", { from: to, publicKey: target ? target.publicKey || null : null });
     });
 
-    const getPeerName = (id) => {
-      const peer = connectedPeers.find((p) => p.id === id);
-      return peer ? peer.name : "Anonymous";
-    };
+    // allow manual refresh
+    socket.on("refresh-peer-list", () => {
+      emitPeerListToAll();
+    });
+
+    // handle disconnect
+    socket.on("disconnect", (reason) => {
+      console.log("Client disconnected:", socket.id, "reason:", reason);
+      users.delete(socket.id);
+      emitPeerListToAll();
+    });
   });
 }
