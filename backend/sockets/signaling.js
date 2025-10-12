@@ -67,6 +67,26 @@ export default function setupSocket(io) {
       io.to(socket.id).emit("connection-accepted", { from: to, name: otherName });
     });
 
+
+    // connection-declined: notify sender that their request was rejected
+socket.on("connection-declined", ({ to }) => {
+  const decliner = users.get(socket.id) || { id: socket.id, name: "Anonymous" };
+  console.log("connection-declined:", socket.id, "->", to);
+
+  if (io.sockets.sockets.get(to)) {
+    io.to(to).emit("connection-declined", { from: socket.id, name: decliner.name });
+  }
+});
+
+socket.on("manual-disconnect", ({ to }) => {
+  const user = users.get(socket.id);
+  if (io.sockets.sockets.get(to)) {
+    io.to(to).emit("peer-disconnected", { id: socket.id, name: user?.name || "Anonymous" });
+  }
+  emitPeerListToAll();
+});
+
+
     // Respond to client asking for a specific peer's public key
     // payload: { to: "<peerSocketId>" }
     socket.on("get-public-key", ({ to }) => {
@@ -83,9 +103,18 @@ export default function setupSocket(io) {
 
     // handle disconnect
     socket.on("disconnect", (reason) => {
-      console.log("Client disconnected:", socket.id, "reason:", reason);
-      users.delete(socket.id);
-      emitPeerListToAll();
-    });
+  console.log("Client disconnected:", socket.id, "reason:", reason);
+  
+  const disconnectedUser = users.get(socket.id);
+  users.delete(socket.id);
+
+  // Notify all remaining peers
+  if (disconnectedUser) {
+    io.emit("peer-disconnected", { id: socket.id, name: disconnectedUser.name });
+    emitPeerListToAll();
+  }
+});
+
+
   });
 }
