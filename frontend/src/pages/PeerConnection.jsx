@@ -10,6 +10,7 @@ import {
   encryptChunkAES,
   decryptChunkAES,
 } from "../utils/cryptoUtils";
+import { useToast } from "../context/ToastContext";
 
 const SOCKET_SERVER_URL = "http://localhost:5000";
 
@@ -36,6 +37,8 @@ export default function PeerConnection() {
   const storedUser = JSON.parse(localStorage.getItem("user") || "null");
   const userName = storedUser?.name || "Anonymous";
 
+  const { addToast } = useToast();
+
   useEffect(() => {
     connectedPeersRef.current = connectedPeers;
   }, [connectedPeers]);
@@ -50,6 +53,8 @@ export default function PeerConnection() {
     })();
   }, []);
 
+    
+
   // Initialize socket only after myPublicKey is ready
   useEffect(() => {
     if (!myPublicKey) return;
@@ -61,6 +66,26 @@ export default function PeerConnection() {
       // Announce new user with public key
       socketRef.current.emit("new-user", { name: userName, publicKey: myPublicKey });
     });
+
+    socketRef.current.on("connection-declined", ({ from, name }) => {
+  console.debug("connection-declined from", from);
+
+  // Show toast for sender
+  addToast(`${name} rejected your connection request`, "error");
+
+  // Remove from sentRequestsRef
+  sentRequestsRef.current.delete(from);
+
+  // Temporarily highlight rejected peer in UI
+  setPeers(prev => prev.map(p =>
+    p.id === from ? { ...p, rejected: true } : p
+  ));
+  setTimeout(() => {
+    setPeers(prev => prev.map(p =>
+      p.id === from ? { ...p, rejected: false } : p
+    ));
+  }, 3000);
+});
 
     // Debug: raw peer-list
     socketRef.current.on("peer-list", (peerList) => {
@@ -85,7 +110,6 @@ export default function PeerConnection() {
           }
         }
       });
-
       setPeers(available);
     });
 
@@ -119,6 +143,7 @@ export default function PeerConnection() {
     // Connection accepted
     socketRef.current.on("connection-accepted", ({ from, name }) => {
       console.debug("connection-accepted from", from);
+      addToast(`${name} accepted your connection request`, "success");
       setConnectedPeers(prev => {
         if (prev.find(p => p.id === from)) return prev;
         const next = [...prev, { id: from, name }];
@@ -152,6 +177,17 @@ export default function PeerConnection() {
         }
       })();
     });
+    socketRef.current.on("peer-disconnected", ({ id, name }) => {
+  addToast(`${name} disconnected`, "warning");
+
+  // Remove from connected peers
+  setConnectedPeers(prev => {
+    const next = prev.filter(p => p.id !== id);
+    connectedPeersRef.current = next;
+    return next;
+  });
+});
+
 
     // fallback debug
     socketRef.current.on("disconnect", (reason) => {
@@ -257,6 +293,7 @@ export default function PeerConnection() {
 
               setReceivedFiles(prev => [{ name: nameToUse, url, fileType: receivedFileType, from: { id: sender.id, name: sender.name } }, ...prev]);
               setProgressMap(prev => ({ ...prev, [peerId]: 0 }));
+              addToast(`Received file ${nameToUse} from ${sender.name}`, "info");
             }
 
             // reset transfer state
@@ -351,11 +388,26 @@ export default function PeerConnection() {
       connectedPeersRef.current = next;
       return next;
     });
+    addToast(`Connection accepted with ${name}`, "success");
     setPeers(prev => prev.filter(p => p.id !== id));
     setIncomingRequest(null);
   };
 
-  const declineConnection = () => setIncomingRequest(null);
+  const declineConnection = () => {
+  if (!incomingRequest) return;
+
+  const { id, name } = incomingRequest; // id = peer who sent request
+
+  // Show toast locally
+  addToast("Connection request declined", "error");
+
+  // Emit to backend so sender knows
+  if (socketRef.current && socketRef.current.connected) {
+    socketRef.current.emit("connection-declined", { to: id });
+  }
+
+  setIncomingRequest(null);
+};
 
   // File handling
   const handleFileChangeForPeer = (peerId, e) => {
@@ -458,35 +510,56 @@ export default function PeerConnection() {
       setProgressMap(prev => ({ ...prev, [peerId]: Math.floor((offset / file.size) * 100) }));
       if (offset < file.size) readSlice(offset);
       else {
-        setTimeout(() => { try { channel.send(JSON.stringify({ type: "done", transferId })); } catch(e){} }, 20);
-        setTimeout(() => setProgressMap(prev => ({ ...prev, [peerId]: 0 })), 1200);
-      }
+  setTimeout(() => { 
+    try { 
+      channel.send(JSON.stringify({ type: "done", transferId }));
+      const peer = connectedPeers.find(p => p.id === peerId);
+      const peerName = peer ? peer.name : peerId;  
+      addToast(`File ${file.name} sent successfully to ${peerName}`, "success");
+    } catch(e){} 
+  }, 20);
+  setTimeout(() => setProgressMap(prev => ({ ...prev, [peerId]: 0 })), 1200);
+}
+
     };
 
     readSlice(0);
   };
 
   const disconnectPeer = (peerId) => {
-    peerConnectionsRef.current[peerId]?.close();
-    delete peerConnectionsRef.current[peerId];
-    delete dataChannelsRef.current[peerId];
-    delete aesKeysRef.current[peerId];
-    delete peerPublicKeysRef.current[peerId];
+  //  Close peer connection + cleanup local state
+  peerConnectionsRef.current[peerId]?.close();
+  delete peerConnectionsRef.current[peerId];
+  delete dataChannelsRef.current[peerId];
+  delete aesKeysRef.current[peerId];
+  delete peerPublicKeysRef.current[peerId];
 
-    setPeerPublicKeys(prev => {
-      const next = { ...prev };
-      delete next[peerId];
-      return next;
-    });
+  setPeerPublicKeys(prev => {
+    const next = { ...prev };
+    delete next[peerId];
+    return next;
+  });
 
-    setConnectedPeers(prev => {
-      const next = prev.filter(p => p.id !== peerId);
-      connectedPeersRef.current = next;
-      return next;
-    });
+  setConnectedPeers(prev => {
+    const next = prev.filter(p => p.id !== peerId);
+    connectedPeersRef.current = next;
+    return next;
+  });
 
+  //  Notify the other peer via backend
+  if (socketRef.current && socketRef.current.connected) {
+    socketRef.current.emit("manual-disconnect", { to: peerId });
+  }
+
+  // Local toast for feedback
+  addToast("You disconnected from peer", "warning");
+
+  // Optional: refresh peer list after short delay
+  setTimeout(() => {
     if (socketRef.current) socketRef.current.emit("refresh-peer-list");
-  };
+  }, 500);
+};
+
 
   const downloadReceived = (file) => {
     if (!file || !file.url) return;
